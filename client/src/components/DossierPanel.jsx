@@ -16,6 +16,8 @@ export default function DossierPanel({ activeLead, onStatusUpdated }) {
       return;
     }
     let isMounted = true;
+    setPitchText('');
+    setDirectLink('');
     setIsGenerating(true);
 
     generatePitch(activeLead, channel)
@@ -51,6 +53,7 @@ export default function DossierPanel({ activeLead, onStatusUpdated }) {
   }
 
   const handleCopy = () => {
+    if (!pitchText || isGenerating) return;
     navigator.clipboard.writeText(pitchText);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
@@ -223,7 +226,8 @@ export default function DossierPanel({ activeLead, onStatusUpdated }) {
             />
             <button
               onClick={handleCopy}
-              className="absolute top-2.5 right-2.5 px-2 py-1 rounded bg-[var(--card)] hover:bg-[var(--sidebar)] border border-[var(--border)] text-[11px] text-[var(--foreground)] font-medium flex items-center gap-1 shadow-xs transition active:scale-95"
+              disabled={!pitchText || isGenerating}
+              className="absolute top-2.5 right-2.5 px-2 py-1 rounded bg-[var(--card)] hover:bg-[var(--sidebar)] border border-[var(--border)] text-[11px] text-[var(--foreground)] font-medium flex items-center gap-1 shadow-xs transition active:scale-95 disabled:opacity-50"
             >
               {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-[var(--muted-foreground)]" />}
               <span>{copied ? 'Tersalin ✓' : 'Salin Draf'}</span>
@@ -233,7 +237,7 @@ export default function DossierPanel({ activeLead, onStatusUpdated }) {
 
         {/* Action CTAs */}
         <div className="flex items-center gap-2 pt-2">
-          {directLink ? (
+          {directLink && !isGenerating ? (
             <a
               href={directLink}
               target="_blank"
@@ -246,7 +250,8 @@ export default function DossierPanel({ activeLead, onStatusUpdated }) {
           ) : (
             <button
               onClick={handleCopy}
-              className="flex-1 py-2 px-3 rounded-lg bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 font-medium text-xs transition flex items-center justify-center gap-2 shadow-sm"
+              disabled={!pitchText || isGenerating}
+              className="flex-1 py-2 px-3 rounded-lg bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 font-medium text-xs transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
             >
               <Copy className="w-3.5 h-3.5" />
               <span>Salin Teks untuk Dikirim</span>

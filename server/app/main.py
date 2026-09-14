@@ -6,8 +6,8 @@ import csv
 import io
 
 from .models.schema import (
-    ProspectLead, ScanRequest, AuditUrlRequest, AuditUrlResponse,
-    PitchRequest, PitchResponse, CustomSourceConfig
+    ProspectLead, ScanRequest, ScanResponse, AuditUrlRequest, AuditUrlResponse,
+    PitchRequest, PitchResponse, CustomSourceConfig, CustomSourceConfigResponse
 )
 from .services.audit import audit_web_url
 from .services.pitch import generate_pitch
@@ -24,7 +24,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -52,7 +52,7 @@ def health_check():
         "author": "Gustiakmal",
         "total_leads": len(leads_store),
         "custom_source_active": custom_source_config.active,
-        "custom_source_url": custom_source_config.app_endpoint_url
+        "custom_source_configured": bool(custom_source_config.app_endpoint_url)
     }
 
 @app.get("/api/leads", response_model=List[ProspectLead])
@@ -61,33 +61,35 @@ def get_current_leads(problem_type: Optional[str] = None):
         return leads_store
     return [lead for lead in leads_store if lead.problem_type == problem_type]
 
-@app.post("/api/scan", response_model=List[ProspectLead])
+@app.post("/api/scan", response_model=ScanResponse)
 async def scan_leads(req: ScanRequest):
     global leads_store
     leads = []
+    hint = None
+    meta = None
 
-    # If custom user app source is configured and active, fetch from custom adapter
     if custom_source_config.active and custom_source_config.app_endpoint_url:
-        custom_leads = await custom_app_scraper.fetch_leads(
-            keyword=req.keyword,
-            location=req.location,
-            custom_endpoint=custom_source_config.app_endpoint_url
-        )
-        leads.extend(custom_leads)
-
-    # If user provided a keyword or custom target
-    if not leads and req.keyword.strip():
-        leads = await directory_scraper.fetch_leads(
-            keyword=req.keyword,
+        try:
+            leads = await custom_app_scraper.fetch_leads(
+                keyword=req.keyword,
+                location=req.location,
+                custom_endpoint=custom_source_config.app_endpoint_url
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    else:
+        leads, meta = await directory_scraper.fetch_leads_with_meta(
+            keyword=req.keyword or "",
             location=req.location
         )
+        hint = (meta or {}).get("hint")
 
     leads_store = leads
 
     if req.problem_filter and req.problem_filter != "all":
-        return [l for l in leads if l.problem_type == req.problem_filter]
+        leads = [l for l in leads if l.problem_type == req.problem_filter]
 
-    return leads
+    return ScanResponse(leads=leads, hint=hint, meta=meta)
 
 @app.post("/api/audit-url", response_model=AuditUrlResponse)
 async def audit_url_endpoint(req: AuditUrlRequest):
@@ -107,16 +109,26 @@ def update_lead_status(lead_id: str, status: str = Query(...)):
             return {"status": "success", "lead": lead}
     raise HTTPException(status_code=404, detail="Lead tidak ditemukan")
 
-@app.get("/api/config/source", response_model=CustomSourceConfig)
-def get_source_config():
-    return custom_source_config
+def public_source_config():
+    return CustomSourceConfigResponse(
+        app_endpoint_url=custom_source_config.app_endpoint_url,
+        active=custom_source_config.active,
+        has_api_key=bool(custom_source_config.api_key)
+    )
 
-@app.post("/api/config/source", response_model=CustomSourceConfig)
+@app.get("/api/config/source", response_model=CustomSourceConfigResponse)
+def get_source_config():
+    return public_source_config()
+
+@app.post("/api/config/source", response_model=CustomSourceConfigResponse)
 def set_source_config(config: CustomSourceConfig):
     global custom_source_config
-    custom_source_config = config
-    custom_app_scraper.set_target_address(config.app_endpoint_url)
-    return custom_source_config
+    api_key = config.api_key.strip() if config.api_key else None
+    if not api_key and config.app_endpoint_url == custom_source_config.app_endpoint_url:
+        api_key = custom_source_config.api_key
+    custom_source_config = config.model_copy(update={"api_key": api_key})
+    custom_app_scraper.set_target_address(config.app_endpoint_url, api_key)
+    return public_source_config()
 
 @app.get("/api/export")
 def export_leads_csv():

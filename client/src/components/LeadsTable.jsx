@@ -6,7 +6,9 @@ export default function LeadsTable({
   activeLead,
   onSelectLead,
   onQuickFilter,
-  totalCount
+  totalCount,
+  scanHint,
+  currentLocation,
 }) {
   const getProblemBadge = (type) => {
     switch (type) {
@@ -60,10 +62,18 @@ export default function LeadsTable({
               <div className="w-9 h-9 rounded-lg bg-[var(--sidebar)] border border-[var(--border)] flex items-center justify-center text-[var(--muted-foreground)]">
                 <Search className="w-4 h-4" />
               </div>
-              <div className="font-semibold text-[var(--foreground)] text-xs">Belum Ada Target Prospek</div>
-              <p className="max-w-xs text-[11px] text-[var(--muted-foreground)] leading-relaxed">
-                Ketik target pencarian di atas atau hubungkan endpoint aplikasi Anda melalui tombol pengaturan di kanan atas.
-              </p>
+              <div className="font-semibold text-[var(--foreground)] text-xs">
+                {scanHint ? 'Tidak Ada Hasil di Lokasi Ini' : 'Belum Ada Target Prospek'}
+              </div>
+              {scanHint ? (
+                <p className="max-w-sm text-[11px] text-amber-300/90 leading-relaxed bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  {scanHint}
+                </p>
+              ) : (
+                <p className="max-w-xs text-[11px] text-[var(--muted-foreground)] leading-relaxed">
+                  Isi <span className="text-[var(--foreground)] font-medium">{currentLocation || 'kota/kabupaten'}</span> + kata kunci di atas lalu <span className="text-[var(--foreground)] font-medium">Jalankan Radar</span>. Untuk provinsi luas seperti <span className="text-[var(--foreground)]">Papua</span> pakai kota: <span className="text-emerald-400">Jayapura, Timika, Manokwari, Merauke</span> — bukan titik hutan tengah provinsi. Seluruh Indonesia didukung (OSM).
+                </p>
+              )}
             </div>
           ) : (
             leads.map((lead) => {

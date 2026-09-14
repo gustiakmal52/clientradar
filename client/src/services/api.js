@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export async function fetchLeads(problemFilter = 'all') {
   const url = `${API_BASE}/leads?problem_type=${problemFilter}`;
@@ -17,8 +17,14 @@ export async function scanLeads(keyword, location = '', problemFilter = 'all') {
       problem_filter: problemFilter
     })
   });
-  if (!res.ok) throw new Error('Gagal menjalankan scan');
-  return res.json();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Gagal menjalankan scan');
+  }
+  const data = await res.json();
+  // API baru: { leads: [], hint: "..." } ; lama: []
+  if (Array.isArray(data)) return { leads: data, hint: null };
+  return { leads: data.leads || [], hint: data.hint || null, meta: data.meta || null };
 }
 
 export async function auditLiveUrl(url) {

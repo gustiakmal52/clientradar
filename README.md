@@ -39,12 +39,21 @@ A full-stack, modular client prospecting and web audit application designed spec
 
 ## ⚡ Cara Menjalankan
 
-### 1. Jalankan Sekaligus (All-in-One)
+### 1. Instalasi pertama
+```bash
+python3 -m venv venv
+venv/bin/python3 -m pip install -r server/requirements.txt
+npm ci --prefix client
+```
+
+### 2. Jalankan Sekaligus (All-in-One)
 ```bash
 ./start.sh
 ```
 
-### 2. Jalankan Terpisah
+Secara default aplikasi hanya dapat diakses dari komputer sendiri. Untuk jaringan yang Anda percaya, jalankan `CLIENTRADAR_HOST=0.0.0.0 ./start.sh`. Mode ini ditujukan untuk satu pengguna/instalasi lokal; jangan mengekspos API langsung ke internet tanpa autentikasi, penyimpanan per pengguna, dan pembatasan tujuan request keluar.
+
+### 3. Jalankan Terpisah
 **Backend:**
 ```bash
 cd server
@@ -59,3 +68,5 @@ npm run dev
 
 * **Frontend UI:** [http://localhost:5173](http://localhost:5173)
 * **Backend API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+> Sumber bawaan berisi data demonstrasi. Untuk mengambil data nyata, hubungkan endpoint/API milik Anda melalui **Target: Custom App**. Token opsional dikirim sebagai `Authorization: Bearer <token>` dan tidak dikembalikan oleh API konfigurasi.

@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from urllib.parse import urlparse
 from typing import List, Optional, Literal
 
 class DiagnosticItem(BaseModel):
@@ -31,6 +32,11 @@ class ScanRequest(BaseModel):
     problem_filter: Optional[str] = "all"
     custom_source_url: Optional[str] = None
 
+class ScanResponse(BaseModel):
+    leads: List[ProspectLead]
+    hint: Optional[str] = None
+    meta: Optional[dict] = None
+
 class AuditUrlRequest(BaseModel):
     url: str
 
@@ -57,3 +63,18 @@ class CustomSourceConfig(BaseModel):
     app_endpoint_url: str
     api_key: Optional[str] = None
     active: bool = True
+
+    @field_validator("app_endpoint_url")
+    @classmethod
+    def valid_endpoint(cls, value: str) -> str:
+        if not value:
+            return value
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Endpoint harus berupa URL http atau https")
+        return value
+
+class CustomSourceConfigResponse(BaseModel):
+    app_endpoint_url: str
+    active: bool
+    has_api_key: bool

@@ -2,9 +2,7 @@ import React, { useState } from 'react';
 import { X, Search, Globe, Shield, Smartphone, Gauge, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { auditLiveUrl } from '../services/api';
 
-export default function LiveUrlAuditModal({ isOpen, onClose }) {
-  if (!isOpen) return null;
-
+export default function LiveUrlAuditModal({ onClose }) {
   const [url, setUrl] = useState('');
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -76,7 +74,7 @@ export default function LiveUrlAuditModal({ isOpen, onClose }) {
                   <div className="font-mono text-[10px] text-[var(--muted-foreground)] uppercase">Skor Kesehatan Web</div>
                   <div className="text-xl font-bold text-[var(--foreground)] mt-0.5">{result.url}</div>
                   <div className="flex items-center gap-2 mt-1 text-[11px] text-[var(--muted-foreground)]">
-                    <span>HTTP: {result.status_code || 200}</span>
+                    <span>HTTP: {result.status_code ?? 'Tidak tersedia'}</span>
                     <span>•</span>
                     <span>Latensi: {result.response_time_ms} ms</span>
                   </div>

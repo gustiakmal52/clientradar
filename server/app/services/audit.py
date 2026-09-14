@@ -10,12 +10,13 @@ async def audit_web_url(url: str) -> AuditUrlResponse:
     else:
         target_url = url
 
-    is_ssl = target_url.startswith("https://")
+    uses_https = target_url.startswith("https://")
+    is_ssl = False
     issues: List[DiagnosticItem] = []
     detected_tech: List[str] = []
     score = 100
 
-    if not is_ssl:
+    if not uses_https:
         score -= 25
         issues.append(DiagnosticItem(
             status="critical",
@@ -35,6 +36,15 @@ async def audit_web_url(url: str) -> AuditUrlResponse:
             })
             elapsed_ms = round((time.time() - start_time) * 1000, 1)
             status_code = res.status_code
+            is_ssl = res.url.scheme == "https"
+
+            if uses_https and not is_ssl:
+                score -= 25
+                issues.append(DiagnosticItem(
+                    status="critical",
+                    label="Redirect Berakhir Tanpa HTTPS",
+                    detail="Website mengalihkan koneksi HTTPS ke HTTP biasa."
+                ))
 
             if status_code >= 400:
                 score -= 30

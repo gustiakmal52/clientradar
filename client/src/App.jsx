@@ -19,18 +19,20 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [telemetryText, setTelemetryText] = useState('');
+  const [scanHint, setScanHint] = useState(null);
   
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUrlAuditOpen, setIsUrlAuditOpen] = useState(false);
   const [sourceConfig, setSourceConfig] = useState(null);
 
-  // Auto-detect user's city when app loads (Banjarmasin, Jakarta, Surabaya, etc.)
+  // Auto-detect on first load — tiap rekan yang git clone langsung keisi kotanya (semua wilayah).
   const handleDetectLocation = () => {
     detectUserLocation()
       .then((geo) => {
         if (geo && geo.city) {
           setDetectedCity(geo.city);
-          setLocation(geo.city);
+          // Jangan timpa kalau user sudah mengetik manual
+          setLocation((prev) => (prev.trim() ? prev : geo.city));
         }
       })
       .catch((e) => console.warn('Could not auto-detect location', e));
@@ -38,14 +40,12 @@ export default function App() {
 
   useEffect(() => {
     handleDetectLocation();
+  }, []);
 
-    fetchLeads('all')
-      .then((data) => {
-        setLeads(data || []);
-        if (data && data.length > 0) setActiveLead(data[0]);
-      })
-      .catch((err) => console.error(err));
-
+  // Dibuka kosong — tanpa template/demo. User isi lokasi + keyword sendiri (seluruh Indonesia via OSM).
+  useEffect(() => {
+    setLeads([]);
+    setActiveLead(null);
     getSourceConfig()
       .then((cfg) => setSourceConfig(cfg))
       .catch((err) => console.error(err));
@@ -66,14 +66,14 @@ export default function App() {
       .catch((err) => console.error(err));
   };
 
-  // Run live scan
+  // Run live scan — wajib lokasi (seluruh Indonesia). Tanpa lokasi -> minta isi dulu.
   const handleExecuteScan = async () => {
-    if (!keyword.trim() && !sourceConfig?.active) {
-      alert('Silakan ketik target bisnis (misal: "Klinik Gigi" atau "Restoran") atau aktifkan sumber aplikasi kustom Anda.');
+    if (!location.trim()) {
+      alert('Isi lokasi dulu (misal: Makassar, Jakarta, Bandung, Surabaya, Medan, dll). Seluruh Indonesia didukung.');
       return;
     }
-
-    const effectiveQuery = location.trim() ? `${keyword} di ${location}` : keyword;
+    const kwTrim = keyword.trim();
+    const effectiveQuery = kwTrim ? `${kwTrim} di ${location}` : `semua prospek di ${location}`;
 
     setIsScanning(true);
     setScanProgress(15);
@@ -87,11 +87,21 @@ export default function App() {
     }, 200);
 
     try {
+      setScanHint(null);
       setTelemetryText('Memverifikasi responsivitas, SSL, dan mengekstraksi prospek...');
-      const results = await scanLeads(keyword, location, filter);
+      const { leads: results, hint, meta } = await scanLeads(keyword, location, filter);
       clearInterval(progressTimer);
       setScanProgress(100);
-      setTelemetryText('Selesai. Daftar target prospek berhasil diperbarui.');
+      if (hint) {
+        setTelemetryText(hint);
+      } else if (results && results.length > 0) {
+        setTelemetryText(`Selesai — ${results.length} prospek ditemukan di ${location}.`);
+      } else {
+        const detail = meta?.detail || '';
+        setTelemetryText(detail ? `Tidak ada hasil. ${detail.slice(0,120)}` : `Tidak ada hasil di ${location} untuk "${kwTrim || 'browse'}". Coba kata: cafe, resto, hotel, klinik atau ganti kota.`);
+      }
+
+      if (hint) setScanHint(hint);
 
       setTimeout(() => {
         setLeads(results || []);
@@ -105,6 +115,8 @@ export default function App() {
     } catch (err) {
       clearInterval(progressTimer);
       setIsScanning(false);
+      setTelemetryText(`Gagal: ${err.message}`);
+      setScanHint(err.message);
       alert(`Gagal memindai: ${err.message}`);
     }
   };
@@ -119,9 +131,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-transparent text-[var(--foreground)] p-2 sm:p-4 flex flex-col justify-between">
-      {/* Elevated Glass Container */}
-      <div className="bg-[var(--card)]/90 backdrop-blur-md border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
+    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] p-2 sm:p-4 flex flex-col justify-between">
+      {/* Elevated Container - solid, no blur */}
+      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
         {/* Header with Author Gustiakmal */}
         <HeaderBar
           onOpenSettings={() => setIsSettingsOpen(true)}
@@ -151,6 +163,15 @@ export default function App() {
           statusText={telemetryText}
         />
 
+        {/* Scan hint — untuk provinsi luas seperti Papua yang pusatnya di hutan -> kasih tau pakai kota */}
+        {scanHint && !isScanning && (
+          <div className="px-4 py-2.5 bg-amber-500/10 border-y border-amber-500/20 text-[11px] text-amber-300 font-mono leading-relaxed flex items-start gap-2">
+            <span className="mt-0.5">⚠️</span>
+            <span>{scanHint}</span>
+            <button onClick={() => setScanHint(null)} className="ml-auto text-amber-400 hover:text-amber-200 shrink-0">✕</button>
+          </div>
+        )}
+
         {/* Split View */}
         <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--border)] min-h-[500px]">
           <LeadsTable
@@ -159,6 +180,8 @@ export default function App() {
             onSelectLead={setActiveLead}
             onQuickFilter={handleFilterChange}
             totalCount={leads.length}
+            scanHint={scanHint}
+            currentLocation={location}
           />
           <DossierPanel
             activeLead={activeLead}
@@ -174,17 +197,17 @@ export default function App() {
       </footer>
 
       {/* Modals */}
-      <SourceConfigModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        currentConfig={sourceConfig}
-        onConfigSaved={(updated) => setSourceConfig(updated)}
-      />
+      {isSettingsOpen && (
+        <SourceConfigModal
+          onClose={() => setIsSettingsOpen(false)}
+          currentConfig={sourceConfig}
+          onConfigSaved={(updated) => setSourceConfig(updated)}
+        />
+      )}
 
-      <LiveUrlAuditModal
-        isOpen={isUrlAuditOpen}
-        onClose={() => setIsUrlAuditOpen(false)}
-      />
+      {isUrlAuditOpen && (
+        <LiveUrlAuditModal onClose={() => setIsUrlAuditOpen(false)} />
+      )}
     </div>
   );
 }

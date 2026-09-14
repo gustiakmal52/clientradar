@@ -4,7 +4,7 @@ import { getExportCsvUrl } from '../services/api';
 
 export default function HeaderBar({ onOpenSettings, onOpenUrlAudit, totalLeads, activeSource }) {
   return (
-    <header className="px-4 py-3 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--card)]/90 backdrop-blur-md">
+    <header className="px-4 py-3 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--card)]">
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-[var(--foreground)] text-[var(--background)] flex items-center justify-center font-mono font-bold text-xs tracking-tighter shadow-sm">
           CR

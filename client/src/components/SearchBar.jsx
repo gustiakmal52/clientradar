@@ -19,7 +19,7 @@ export default function SearchBar({
   };
 
   return (
-    <section className="px-4 py-3 bg-[var(--sidebar)]/50 border-b border-[var(--border)]">
+    <section className="px-4 py-3 bg-[var(--sidebar)] border-b border-[var(--border)]">
       <form onSubmit={handleSubmit} className="flex flex-col lg:flex-row gap-2.5 items-stretch lg:items-center">
         {/* Business Category / Target Input */}
         <div className="flex-1 relative">

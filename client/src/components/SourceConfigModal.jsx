@@ -2,11 +2,9 @@ import React, { useState } from 'react';
 import { X, Check, Globe, HelpCircle } from 'lucide-react';
 import { saveSourceConfig } from '../services/api';
 
-export default function SourceConfigModal({ isOpen, onClose, currentConfig, onConfigSaved }) {
-  if (!isOpen) return null;
-
+export default function SourceConfigModal({ onClose, currentConfig, onConfigSaved }) {
   const [endpointUrl, setEndpointUrl] = useState(currentConfig?.app_endpoint_url || '');
-  const [apiKey, setApiKey] = useState(currentConfig?.api_key || '');
+  const [apiKey, setApiKey] = useState('');
   const [active, setActive] = useState(currentConfig?.active || false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -74,7 +72,7 @@ export default function SourceConfigModal({ isOpen, onClose, currentConfig, onCo
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Bearer token jika aplikasi Anda membutuhkan autentikasi..."
+              placeholder={currentConfig?.has_api_key ? 'Token tersimpan — kosongkan untuk mempertahankan' : 'Bearer token jika endpoint membutuhkan autentikasi...'}
               className="w-full px-3 py-2 bg-[var(--background)] border border-[var(--border)] rounded-lg text-xs text-[var(--foreground)] font-mono focus:outline-none focus:border-blue-500 transition"
             />
           </div>

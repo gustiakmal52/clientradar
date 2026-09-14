@@ -1,39 +1,52 @@
 /**
- * Auto-detect user's current city & region using client IP lookup.
- * Automatically adapts whether the user is in Banjarmasin, Jakarta, Surabaya, etc.
+ * Detect the user's current city & region — works for semua wilayah.
+ * 1) IP lookup (ipwho.is)  2) fallback ipapi.co  3) browser timezone (tanpa hardcode kota)
+ * Dipanggil otomatis saat app load, jadi tiap rekan yang download langsung terisi kotanya.
  */
 export async function detectUserLocation() {
+  const tryParse = (data) => {
+    const city = data.city || data.region || data.timezone || '';
+    if (!city) return null;
+    return {
+      city: String(city).split('/').pop().replace(/_/g, ' '),
+      region: data.region || data.regionName || data.timezone || '',
+      country: data.country || data.country_name || 'Indonesia',
+      ip: data.ip || data.query || undefined,
+    };
+  };
+
+  // 1) ipwho.is — gratis, tanpa key
   try {
     const res = await fetch('https://ipwho.is/');
-    if (!res.ok) throw new Error('Failed to fetch IP location');
-    const data = await res.json();
-    if (data.success) {
-      return {
-        city: data.city || 'Indonesia',
-        region: data.region || '',
-        country: data.country || 'Indonesia',
-        ip: data.ip
-      };
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success !== false && (data.city || data.region)) {
+        const p = tryParse(data);
+        if (p) return p;
+      }
     }
-  } catch (err) {
-    console.warn('[Location Detection Warning]: Fallback to timezone inference', err);
-  }
+  } catch (_) {}
 
-  // Smart fallback based on browser Timezone if offline/blocked
+  // 2) ipapi.co — fallback kedua (rate-limit longgar)
   try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz.includes('Makassar') || tz.includes('Banjarmasin')) {
-      return { city: 'Banjarmasin', region: 'Kalimantan Selatan', country: 'Indonesia' };
+    const res = await fetch('https://ipapi.co/json/');
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.error && (data.city || data.region)) {
+        const p = tryParse(data);
+        if (p) return p;
+      }
     }
-    if (tz.includes('Jakarta')) {
-      return { city: 'Jakarta', region: 'DKI Jakarta', country: 'Indonesia' };
-    }
-    if (tz.includes('Jayapura')) {
-      return { city: 'Jayapura', region: 'Papua', country: 'Indonesia' };
-    }
-  } catch (e) {
-    // Ignore
-  }
+  } catch (_) {}
 
-  return { city: 'Banjarmasin', region: 'Indonesia', country: 'Indonesia' };
+  // 3) Browser timezone — tidak hardcode Banjarmasin/Jakarta, ambil apa adanya
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; // e.g. Asia/Jakarta, Asia/Makassar
+    if (tz && tz.includes('/')) {
+      const cityFromTz = tz.split('/').pop().replace(/_/g, ' ');
+      if (cityFromTz) return { city: cityFromTz, region: tz, country: 'Indonesia' };
+    }
+  } catch (_) {}
+
+  return null;
 }
