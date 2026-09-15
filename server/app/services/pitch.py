@@ -22,8 +22,8 @@ def generate_pitch(lead: ProspectLead, channel: str = "wa") -> PitchResponse:
         if prob == "missing_web":
             text = (
                 f"Halo tim *{name}*, salam kenal.\n\n"
-                f"Saya perhatikan ulasan profil Google Maps {name} di {loc} sangat bagus (Rating {rating}★). "
-                f"Namun saat saya ingin melihat katalog layanan & jadwal reservasi resminya, kolom website belum tersedia.\n\n"
+                f"Saya perhatikan {name} di {loc} memiliki reputasi yang baik, "
+                f"namun saat saya ingin melihat katalog layanan & jadwal reservasi resminya, kolom website belum tersedia.\n\n"
                 f"Sebagai developer independen, saya sempat membuat mockup preview solusi: *{sol}* "
                 f"agar pasien/pelanggan bisa langsung memesan slot tanpa admin repot membalas chat satu per satu.\n\n"
                 f"Kira-kira berkenan kah jika saya kirimkan tautan demonya secara gratis untuk dilihat-lihat? Terima kasih banyak."
@@ -61,8 +61,8 @@ def generate_pitch(lead: ProspectLead, channel: str = "wa") -> PitchResponse:
         text = (
             f"Subject: Tinjauan Akselerasi Portal Digital untuk {name}\n\n"
             f"Yth. Manajemen {name},\n\n"
-            f"Perkenalkan saya seorang software developer independen. Mengamati reputasi positif {name} di Google Maps "
-            f"dengan rating {rating}★, kami melihat ada peluang strategis untuk memperluas akuisisi pelanggan digital:\n\n"
+            f"Perkenalkan saya seorang software developer independen. Mengamati reputasi positif {name} di {loc}, "
+            f"kami melihat ada peluang strategis untuk memperluas akuisisi pelanggan digital:\n\n"
             f"Identifikasi Solusi: {sol}\n"
             f"Nilai Manfaat: Mempermudah reservasi instan 24 jam tanpa membebani jam kerja staf admin.\n\n"
             f"Kami telah menyiapkan draf demonstrasi interaktif tanpa komitmen apapun. "

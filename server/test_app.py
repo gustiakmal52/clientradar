@@ -145,8 +145,16 @@ class CustomScraperTest(unittest.IsolatedAsyncioTestCase):
         class Response:
             status_code = 200
             url = httpx.URL("http://example.com/final")
-            text = '<meta name="viewport" content="width=device-width">'
             headers = {}
+
+            async def aiter_bytes(self):
+                yield b'<meta name="viewport" content="width=device-width">'
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return None
 
         class Client:
             async def __aenter__(self):
@@ -155,7 +163,7 @@ class CustomScraperTest(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *_):
                 return None
 
-            async def get(self, *_args, **_kwargs):
+            def stream(self, *_args, **_kwargs):
                 return Response()
 
         with patch("app.services.audit.httpx.AsyncClient", return_value=Client()):
@@ -163,6 +171,60 @@ class CustomScraperTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.is_ssl)
         self.assertTrue(any("Redirect" in issue.label for issue in result.issues))
+
+
+class SecurityTest(unittest.TestCase):
+    def test_ssrf_guard_blocks_internal_targets(self):
+        from app.services.security import validate_ssrf_url
+        for url in [
+            "http://127.0.0.1:8000/api/health",
+            "http://localhost:8000/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.1/",
+            "http://192.168.1.1/",
+            "http://[::1]/",
+        ]:
+            self.assertIsNotNone(validate_ssrf_url(url), f"harus diblokir: {url}")
+
+    def test_ssrf_guard_allows_public_targets(self):
+        from app.services.security import validate_ssrf_url
+        self.assertIsNone(validate_ssrf_url("https://example.com/"))
+        self.assertIsNone(validate_ssrf_url("https://8.8.8.8/"))
+
+    def test_ssrf_guard_rejects_non_http(self):
+        from app.services.security import validate_ssrf_url
+        self.assertIsNotNone(validate_ssrf_url("file:///etc/passwd"))
+        self.assertIsNotNone(validate_ssrf_url("ftp://example.com/"))
+
+    def test_csv_safe_prefixes_formula_chars(self):
+        from app.main import _csv_safe
+        self.assertEqual(_csv_safe('=HYPERLINK("x")'), "'=HYPERLINK(\"x\")")
+        self.assertEqual(_csv_safe("+SUM(A1)"), "'+SUM(A1)")
+        self.assertEqual(_csv_safe("-1+1"), "'-1+1")
+        self.assertEqual(_csv_safe("@cmd"), "'@cmd")
+        self.assertEqual(_csv_safe("Normal Cafe"), "Normal Cafe")
+        self.assertEqual(_csv_safe(None), "-")
+
+    def test_rate_limiter_blocks_after_max(self):
+        from app.services.security import RateLimiter
+        limiter = RateLimiter(max_requests=2, window_seconds=60)
+        self.assertTrue(limiter.allow("ip1"))
+        self.assertTrue(limiter.allow("ip1"))
+        self.assertFalse(limiter.allow("ip1"))
+        self.assertTrue(limiter.allow("ip2"))
+
+    async def test_audit_blocks_internal_target(self):
+        result = await audit_web_url("http://127.0.0.1:8000/api/health")
+        self.assertIsNone(result.status_code)
+        self.assertTrue(any("Tidak Diizinkan" in issue.label for issue in result.issues))
+
+    def test_osm_keyword_sanitized(self):
+        from app.services.scraper.directory import DirectoryScraper
+        scraper = DirectoryScraper()
+        # " dan \ adalah satu-satunya karakter yang bisa memutus string Overpass QL
+        self.assertEqual(scraper._sanitize_osm_keyword('cafe";out;'), 'cafe;out;')
+        self.assertEqual(scraper._sanitize_osm_keyword('x\\'), 'x')
+        self.assertLessEqual(len(scraper._sanitize_osm_keyword("a" * 100)), 40)
 
 
 if __name__ == "__main__":

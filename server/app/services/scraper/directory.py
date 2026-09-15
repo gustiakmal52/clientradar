@@ -1,6 +1,7 @@
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import asyncio
 import hashlib
+import re
 import time
 import httpx
 from .base import BaseScraperAdapter
@@ -10,9 +11,15 @@ class DirectoryScraper(BaseScraperAdapter):
     """
     Real-data only — OpenStreetMap (Nominatim + Overpass).
     Tidak ada fallback demo/template. Jika OSM kosong/timeout -> kembalikan [].
-    Seluruh Indonesia didukung: geocode "{kota}, Indonesia" via Nominatim.
-    Saat app dibuka -> leads_store = [] (kosong), user yang tentukan lokasi+keyword.
+    Seluruh Indonesia didukung:
+      - Kota tunggal: geocode + around query, radius adaptive 4000->2500
+      - Provinsi: loop kota-kota di dalamnya
+      - "Indonesia": loop kota-kota terbesar, stop early saat cukup data
     """
+
+    # ------------------------------------------------------------------ #
+    #  Keyword -> OSM tag mapping
+    # ------------------------------------------------------------------ #
 
     KEYWORD_OSM: Dict[str, list] = {
         "cafe": ['["amenity"="cafe"]', '["shop"="coffee"]', '["amenity"="fast_food"]'],
@@ -48,6 +55,100 @@ class DirectoryScraper(BaseScraperAdapter):
         "gigi": {"klinik", "gigi", "dental"},
     }
 
+    # ------------------------------------------------------------------ #
+    #  Geography — province hints, metro cities, city databases
+    # ------------------------------------------------------------------ #
+
+    PROVINCE_HINT = {
+        "papua": "Jayapura / Manokwari / Merauke",
+        "papua barat": "Manokwari / Sorong",
+        "papua tengah": "Nabire / Timika",
+        "papua pegunungan": "Wamena",
+        "papua selatan": "Merauke",
+        "papua barat daya": "Sorong",
+        "jawa barat": "Bandung / Bekasi / Depok",
+        "jawa tengah": "Semarang / Solo / Magelang",
+        "jawa timur": "Surabaya / Malang / Kediri",
+        "sumatera utara": "Medan / Binjai",
+        "sumatera barat": "Padang / Bukittinggi",
+        "sumatera selatan": "Palembang / Prabumulih",
+        "kalimantan selatan": "Banjarmasin / Banjarbaru",
+        "kalimantan timur": "Balikpapan / Samarinda",
+        "sulawesi selatan": "Makassar / Parepare",
+        "sulawesi utara": "Manado / Bitung",
+        "nusa tenggara barat": "Mataram / Bima",
+        "nusa tenggara timur": "Kupang",
+        "maluku": "Ambon",
+        "maluku utara": "Ternate",
+        "bali": "Denpasar",
+    }
+
+    # Kota yang Overpass-nya rentan timeout — radius kecil wajib
+    METRO_CITIES = {
+        "jakarta", "dki jakarta", "jakarta pusat", "jakarta selatan",
+        "jakarta timur", "jakarta barat", "jakarta utara",
+        "surabaya", "medan", "bandung", "bekasi", "tangerang",
+        "depok", "bogor", "semarang", "yogyakarta", "makassar",
+        "palembang", "malang", "solo",
+    }
+
+    # Kota besar per provinsi — untuk loop nasional & provinsi
+    PROVINCE_CITIES: Dict[str, list] = {
+        "aceh": ["Banda Aceh", "Lhokseumawe", "Langsa"],
+        "sumatera utara": ["Medan", "Binjai", "Pematangsiantar", "Tebing Tinggi"],
+        "sumatera barat": ["Padang", "Bukittinggi", "Payakumbuh"],
+        "riau": ["Pekanbaru", "Dumai"],
+        "jambi": ["Jambi", "Sungai Penuh"],
+        "sumatera selatan": ["Palembang", "Prabumulih", "Lubuklinggau"],
+        "bengkulu": ["Bengkulu"],
+        "lampung": ["Bandar Lampung", "Metro"],
+        "kepulauan riau": ["Batam", "Tanjung Pinang"],
+        "kepulauan bangka belitung": ["Pangkal Pinang"],
+        "banten": ["Tangerang", "Serang", "Cilegon", "Tangerang Selatan"],
+        "dki jakarta": [
+            "Jakarta Selatan", "Jakarta Timur", "Jakarta Barat",
+            "Jakarta Utara", "Jakarta Pusat",
+        ],
+        "jawa barat": ["Bandung", "Bekasi", "Depok", "Bogor", "Cirebon", "Sukabumi", "Tasikmalaya"],
+        "jawa tengah": ["Semarang", "Solo", "Magelang", "Purwokerto", "Tegal", "Pekalongan"],
+        "di yogyakarta": ["Yogyakarta", "Sleman"],
+        "jawa timur": ["Surabaya", "Malang", "Kediri", "Madiun", "Blitar", "Jember"],
+        "kalimantan barat": ["Pontianak", "Singkawang"],
+        "kalimantan tengah": ["Palangkaraya"],
+        "kalimantan selatan": ["Banjarmasin", "Banjarbaru"],
+        "kalimantan timur": ["Balikpapan", "Samarinda", "Bontang"],
+        "kalimantan utara": ["Tarakan"],
+        "sulawesi utara": ["Manado", "Bitung"],
+        "gorontalo": ["Gorontalo"],
+        "sulawesi tengah": ["Palu"],
+        "sulawesi barat": ["Mamuju"],
+        "sulawesi selatan": ["Makassar", "Parepare", "Palopo"],
+        "sulawesi tenggara": ["Kendari", "Baubau"],
+        "bali": ["Denpasar", "Singaraja"],
+        "nusa tenggara barat": ["Mataram", "Bima"],
+        "nusa tenggara timur": ["Kupang"],
+        "maluku": ["Ambon"],
+        "maluku utara": ["Ternate", "Tidore"],
+        "papua": ["Jayapura", "Merauke", "Timika", "Nabire"],
+        "papua barat": ["Manokwari", "Sorong"],
+        "papua tengah": ["Nabire", "Timika"],
+        "papua pegunungan": ["Wamena"],
+        "papua selatan": ["Merauke"],
+        "papua barat daya": ["Sorong"],
+    }
+
+    # Kota terbesar (prioritas untuk scan nasional) — tanpa duplikat
+    NATIONAL_CITIES: List[str] = [
+        "Jakarta", "Surabaya", "Bandung", "Medan", "Semarang",
+        "Makassar", "Palembang", "Tangerang", "Depok", "Bekasi",
+        "Bogor", "Malang", "Pekanbaru", "Padang", "Denpasar",
+        "Bandar Lampung", "Batam", "Yogyakarta", "Solo", "Banjarmasin",
+    ]
+
+    # ------------------------------------------------------------------ #
+    #  Keyword expansion + filter helpers
+    # ------------------------------------------------------------------ #
+
     def _expand_terms(self, terms: List[str]) -> set:
         expanded = set(terms)
         for t in terms:
@@ -60,22 +161,9 @@ class DirectoryScraper(BaseScraperAdapter):
                         expanded |= aliases
         return expanded
 
-    # Provinsi luas — suruh user pakai kota (Papua -> Jayapura, bukan titik hutan tengah provinsi)
-    PROVINCE_HINT = {
-        "papua": "Jayapura / Manokwari / Merauke",
-        "papua barat": "Manokwari / Sorong",
-        "jawa barat": "Bandung / Bekasi / Depok",
-        "jawa tengah": "Semarang / Solo / Magelang",
-        "jawa timur": "Surabaya / Malang / Kediri",
-        "sumatera utara": "Medan / Binjai",
-        "kalimantan selatan": "Banjarmasin / Banjarbaru",
-        "sulawesi selatan": "Makassar / Parepare",
-    }
-
     def _osm_filters(self, keyword: str) -> List[str]:
         kw = (keyword or "").strip().lower()
         if not kw:
-            # Browse kosongan: cukup 3 kategori ringan (jangan 5 — berat di kota padat + timeout Jakarta)
             return ['["amenity"="cafe"]', '["amenity"="restaurant"]', '["tourism"="hotel"]']
         terms = kw.split()
         filters: List[str] = []
@@ -90,12 +178,29 @@ class DirectoryScraper(BaseScraperAdapter):
                     seen.add(f)
                     uniq.append(f)
             return uniq
-        safe = kw.replace('"', '')
+        safe = self._sanitize_osm_keyword(kw)
         return [f'["name"~"{safe}",i]']
 
-    _GEOCODE_CACHE: Dict[str, tuple] = {}
-    _OSM_CACHE: Dict[str, tuple] = {}
+    @staticmethod
+    def _sanitize_osm_keyword(kw: str) -> str:
+        """Bersihkan keyword sebelum disisipkan ke query Overpass QL.
+
+        Hanya karakter yang bisa memutus string Overpass (\" dan \\\\) yang
+        di-strip, plus batas panjang — cegah query injection ke layanan OSM.
+        """
+        return re.sub(r'["\\]', '', (kw or "").strip())[:40]
+
+    # ------------------------------------------------------------------ #
+    #  Caches
+    # ------------------------------------------------------------------ #
+
+    _GEOCODE_CACHE: Dict[str, Tuple[float, Optional[Dict]]] = {}
+    _OSM_CACHE: Dict[str, Tuple[float, list]] = {}
     _OSM_TTL_SEC = 600
+
+    # ------------------------------------------------------------------ #
+    #  Geocode (Nominatim)
+    # ------------------------------------------------------------------ #
 
     async def _geocode(self, location: str) -> Optional[Dict]:
         key = (location or "").strip().lower()
@@ -106,7 +211,7 @@ class DirectoryScraper(BaseScraperAdapter):
                 return val
         q = f"{location.strip()}, Indonesia" if location.strip() else "Indonesia"
         params = {"q": q, "format": "json", "limit": "1", "countrycodes": "id"}
-        headers = {"User-Agent": "ClientRadar/1.2.0 (OSM; Gustiakmal)"}
+        headers = {"User-Agent": "ClientRadar/1.3.0 (OSM; Gustiakmal)"}
         try:
             async with httpx.AsyncClient(timeout=4.0, headers=headers) as client:
                 res = await client.get("https://nominatim.openstreetmap.org/search", params=params)
@@ -126,10 +231,18 @@ class DirectoryScraper(BaseScraperAdapter):
             print(f"[DirectoryScraper geocode fail {location}]: {e}")
             return None
 
+    # ------------------------------------------------------------------ #
+    #  Overpass mirror list
+    # ------------------------------------------------------------------ #
+
     OVERPASS_URLS = [
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
     ]
+
+    # ------------------------------------------------------------------ #
+    #  Map OSM element -> ProspectLead
+    # ------------------------------------------------------------------ #
 
     def _map_osm_to_lead(self, el: Dict, idx: int, display_city: str) -> Optional[ProspectLead]:
         tags: Dict = el.get("tags") or {}
@@ -180,6 +293,11 @@ class DirectoryScraper(BaseScraperAdapter):
 
         diagnostics = list(diagnostics)
         diagnostics.append(DiagnosticItem(status="verified", label=f"Sumber: OpenStreetMap — {display_city}", detail=f"OSM id {el.get('type')}/{el.get('id')} • {tags.get('addr:street') or tags.get('addr:suburb') or display_city}"))
+        diagnostics.append(DiagnosticItem(
+            status="warning",
+            label="Rating & ulasan adalah estimasi internal",
+            detail="ClientRadar tidak mengakses Google Maps — angka rating/ulasan/skor adalah estimasi, bukan data publik."
+        ))
 
         street = tags.get("addr:street") or tags.get("addr:suburb") or tags.get("addr:neighbourhood") or f"Area {display_city}"
         location_str = f"{street}, {display_city}"
@@ -221,6 +339,10 @@ class DirectoryScraper(BaseScraperAdapter):
             contact_status="Baru",
         )
 
+    # ------------------------------------------------------------------ #
+    #  Helpers: cache key, province broad detection
+    # ------------------------------------------------------------------ #
+
     def _cache_key(self, keyword: str, location: str) -> str:
         return f"{(keyword or '').strip().lower()}|{(location or '').strip().lower()}"
 
@@ -236,46 +358,40 @@ class DirectoryScraper(BaseScraperAdapter):
             pass
         return geo.get("type") in ("administrative", "state") and geo.get("class") == "boundary" and geo.get("place_rank") in (4, 5)
 
-    async def _fetch_osm_by_area(self, geo: Dict, keyword: str, display: str) -> List[ProspectLead]:
-        """Untuk provinsi luas seperti Papua: cari via area (bukan around hutan tengah)."""
-        osm_type = geo.get("osm_type")
-        osm_id = geo.get("osm_id")
-        if not osm_type or not osm_id:
-            return []
-        # Overpass area id: relation -> 3600000000 + id, way -> 2400000000 + id, node -> id
-        area_offset = {"relation": 3600000000, "way": 2400000000, "node": 0}
-        area_id = area_offset.get(osm_type, 3600000000) + int(osm_id)
-        filters = self._osm_filters(keyword)
-        clauses = []
-        for f in filters[:2]:
-            clauses.append(f'node{f}(area:{area_id});')
-            clauses.append(f'way{f}(area:{area_id});')
-        ql = f'[out:json][timeout:15];area({area_id})->.a;({ "".join(clauses) });out center 12;'
-        headers = {"User-Agent": "ClientRadar/1.2.0 (OSM; Gustiakmal)"}
-        for url in self.OVERPASS_URLS:
-            try:
-                async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
-                    res = await asyncio.wait_for(client.post(url, data={"data": ql}), timeout=14.0)
-                    if res.status_code != 200:
-                        if res.status_code == 504:
-                            print(f"[OSM area 504 {display} @ {url}]")
-                        continue
-                    elements = res.json().get("elements", [])
-                    leads: List[ProspectLead] = []
-                    for idx, el in enumerate(elements[:15]):
-                        if not el.get("tags"):
-                            continue
-                        lead = self._map_osm_to_lead(el, idx, display)
-                        if lead:
-                            leads.append(lead)
-                    if leads:
-                        return leads
-            except Exception as e:
-                print(f"[OSM area fail {display} @ {url}]: {e}")
-                continue
-        return []
+    # ------------------------------------------------------------------ #
+    #  Location classification: national / province / city
+    # ------------------------------------------------------------------ #
 
-    async def _fetch_osm(self, keyword: str, location: str) -> List[ProspectLead]:
+    _NATIONAL_ALIASES = {
+        "indonesia", "indonesia raya", "ri", "nusantara", "nkri", "nusantara",
+    }
+
+    def _location_kind(self, location: str) -> str:
+        """Return 'national', 'province', or 'city'."""
+        low = (location or "").strip().lower()
+        if low in self._NATIONAL_ALIASES:
+            return "national"
+        # Match exact province name or province + extra words (e.g. "sumatera utara")
+        for prov in self.PROVINCE_CITIES:
+            if low == prov or low.startswith(prov + " "):
+                return "province"
+        return "city"
+
+    def _get_province_for_city(self, city_name: str) -> Optional[str]:
+        """Find which province a city belongs to (exact match from PROVINCE_CITIES)."""
+        city_lower = city_name.lower()
+        for prov, cities in self.PROVINCE_CITIES.items():
+            for c in cities:
+                if c.lower() == city_lower:
+                    return prov
+        return None
+
+    # ------------------------------------------------------------------ #
+    #  Core: fetch OSM for a single city (with radius chain + timeout fallback)
+    # ------------------------------------------------------------------ #
+
+    async def _fetch_osm_city(self, keyword: str, location: str) -> List[ProspectLead]:
+        """Fetch OSM data for one city. Radius chain: 4000 -> 2500 on timeout/error."""
         cache_key = self._cache_key(keyword, location)
         now = time.time()
         if cache_key in self._OSM_CACHE:
@@ -289,96 +405,168 @@ class DirectoryScraper(BaseScraperAdapter):
         lat, lon = geo.get("lat"), geo.get("lon")
         if not lat or not lon:
             return []
+
         display = " ".join(w.capitalize() for w in location.strip().split())
-        is_broad = self._is_province_broad(location, geo)
         low = location.strip().lower()
-        is_metro = low in ("jakarta", "dki jakarta", "jakarta pusat", "jakarta selatan", "jakarta timur", "jakarta barat", "jakarta utara", "surabaya", "medan", "bandung", "bekasi", "tangerang", "depok", "semarang", "yogyakarta")
-        # Provinsi luas seperti Papua: jangan hammer area (504) — langsung hint kota
-        if is_broad and low.split(",")[0].strip() not in ("jayapura", "manokwari", "merauke", "sorong", "timika", "nabire", "jayapura selatan", "sentani", "jayapura utara", "biak"):
-            return []
-        if is_metro:
-            radius = 6000  # Jakarta 6000 terbukti 200 (3000 timeout, 4000 timeout)
-        elif low in ("jayapura", "manokwari", "merauke", "sorong", "timika", "sentani", "jayapura selatan", "jayapura utara"):
-            radius = 3000  # Jayapura 3000 success 3, 4000 timeout, 6000 429
-        else:
-            radius = 8000  # Banjarmasin/Makassar 8000 success 12
+        is_metro = low in self.METRO_CITIES
+
         filters = self._osm_filters(keyword)
-        if is_metro:
-            use_filters = filters[:1]
-        else:
-            use_filters = filters[:2]
-        clauses = []
-        for f in use_filters:
-            clauses.append(f'node{f}(around:{radius},{lat},{lon});')
-            clauses.append(f'way{f}(around:{radius},{lat},{lon});')
-        ql_timeout = 6 if is_metro else 8
-        ql = f'[out:json][timeout:{ql_timeout}];({ "".join(clauses) });out center {8 if is_metro else 12};'
-        headers = {"User-Agent": "ClientRadar/1.2.0 (OSM; Gustiakmal)"}
+        use_filters = filters[:1] if is_metro else filters[:2]
+
+        headers = {"User-Agent": "ClientRadar/1.3.0 (OSM; Gustiakmal)"}
+
+        # Name fallback for single-filter keywords (e.g. "cafe" -> also search by name)
         ql_name_fallback = None
         if len(filters) == 1 and "name" not in filters[0]:
-            safe = (keyword or "").strip().replace('"', "")
+            safe = self._sanitize_osm_keyword(keyword)
             if safe:
-                ql_name_fallback = f'[out:json][timeout:8];(node["name"~"{safe}",i](around:10000,{lat},{lon});way["name"~"{safe}",i](around:10000,{lat},{lon}););out center 12;'
+                ql_name_fallback = (
+                    f'[out:json][timeout:8];'
+                    f'(node["name"~"{safe}",i](around:6000,{lat},{lon});'
+                    f'way["name"~"{safe}",i](around:6000,{lat},{lon}););'
+                    f'out center 12;'
+                )
 
-        # Timeout metro lebih pendek biar tidak nge-hang lama
-        per_url_timeout = 6.0 if is_metro else 7.0
-        result: List[ProspectLead] = []
-        for url in self.OVERPASS_URLS:
-            try:
-                # Metro timeout lebih pendek — Jakarta 504 kalau kelamaan, jangan hang 7s
-                timeout_each = 5.0 if is_metro else per_url_timeout
-                async with httpx.AsyncClient(timeout=timeout_each, headers=headers) as client:
-                    res = await asyncio.wait_for(client.post(url, data={"data": ql}), timeout=timeout_each + 1.0)
-                    if res.status_code == 504:
-                        print(f"[DirectoryScraper OSM 504 {location} kw={keyword} @ {url} radius={radius}]")
-                        continue
-                    if res.status_code != 200:
-                        continue
-                    data = res.json()
-                    elements = data.get("elements", [])
-                    if not elements and ql_name_fallback:
-                        try:
-                            res2 = await asyncio.wait_for(client.post(url, data={"data": ql_name_fallback}), timeout=per_url_timeout + 1.0)
-                            if res2.status_code == 200:
-                                elements = res2.json().get("elements", [])
-                        except asyncio.TimeoutError:
-                            pass
-                    leads: List[ProspectLead] = []
-                    for idx, el in enumerate(elements[:15]):
-                        if not el.get("tags"):
+        # ----- Radius chain: try 4000, fallback 2500 -----
+        radii = [4000, 2500] if not is_metro else [4000, 2500]
+
+        for radius in radii:
+            clauses = []
+            for f in use_filters:
+                clauses.append(f'node{f}(around:{radius},{lat},{lon});')
+                clauses.append(f'way{f}(around:{radius},{lat},{lon});')
+            ql_timeout = 5 if is_metro else 8
+            ql = f'[out:json][timeout:{ql_timeout}];({"".join(clauses)});out center {8 if is_metro else 12};'
+
+            result: List[ProspectLead] = []
+            for url in self.OVERPASS_URLS:
+                try:
+                    timeout_each = 5.0 if is_metro else 7.0
+                    async with httpx.AsyncClient(timeout=timeout_each, headers=headers) as client:
+                        res = await asyncio.wait_for(
+                            client.post(url, data={"data": ql}),
+                            timeout=timeout_each + 1.0,
+                        )
+                        if res.status_code == 504:
+                            print(f"[OSM 504 {location} kw={keyword} @ {url}] radius={radius}")
                             continue
-                        lead = self._map_osm_to_lead(el, idx, display)
-                        if lead:
-                            leads.append(lead)
-                    if leads:
-                        result = leads
-                        break
-                    # 0 leads di metro tapi HTTP 200 — coba kurangi radius lagi sekali (fallback 2500m)
-                    if is_metro and not result:
-                        ql_small = ql.replace(f"around:{radius},", "around:2500,")
-                        try:
-                            res3 = await asyncio.wait_for(client.post(url, data={"data": ql_small}), timeout=per_url_timeout + 1.0)
-                            if res3.status_code == 200:
-                                elements3 = res3.json().get("elements", [])
-                                for idx, el in enumerate(elements3[:10]):
-                                    if not el.get("tags"):
-                                        continue
-                                    lead = self._map_osm_to_lead(el, idx, display)
-                                    if lead:
-                                        result.append(lead)
-                                if result:
-                                    break
-                        except Exception:
-                            pass
-            except (asyncio.TimeoutError, httpx.ReadTimeout):
-                print(f"[DirectoryScraper OSM timeout {location} kw={keyword} @ {url}]")
-                continue
-            except Exception as e:
-                print(f"[DirectoryScraper OSM fail {location} kw={keyword} @ {url}]: {e}")
-                continue
-        ttl = self._OSM_TTL_SEC if result else 30
-        self._OSM_CACHE[cache_key] = (now if result else now - (self._OSM_TTL_SEC - ttl), result)
-        return result
+                        if res.status_code != 200:
+                            continue
+                        elements = res.json().get("elements", [])
+
+                        # Name fallback if tag query empty
+                        if not elements and ql_name_fallback:
+                            try:
+                                res2 = await asyncio.wait_for(
+                                    client.post(url, data={"data": ql_name_fallback}),
+                                    timeout=7.0,
+                                )
+                                if res2.status_code == 200:
+                                    elements = res2.json().get("elements", [])
+                            except asyncio.TimeoutError:
+                                pass
+
+                        leads: List[ProspectLead] = []
+                        for idx, el in enumerate(elements[:15]):
+                            if not el.get("tags"):
+                                continue
+                            lead = self._map_osm_to_lead(el, idx, display)
+                            if lead:
+                                leads.append(lead)
+
+                        if leads:
+                            result = leads
+                            break
+                except (asyncio.TimeoutError, httpx.ReadTimeout):
+                    print(f"[OSM timeout {location} kw={keyword} @ {url}] radius={radius}")
+                    continue
+                except Exception as e:
+                    print(f"[OSM fail {location} kw={keyword} @ {url}]: {e}")
+                    continue
+
+            if result:
+                ttl = self._OSM_TTL_SEC
+                self._OSM_CACHE[cache_key] = (now, result)
+                return result
+
+        # All radii and mirrors exhausted — cache briefly (30s)
+        self._OSM_CACHE[cache_key] = (now - (self._OSM_TTL_SEC - 30), [])
+        return []
+
+    # ------------------------------------------------------------------ #
+    #  Core: fetch OSM for a province (loop cities inside)
+    # ------------------------------------------------------------------ #
+
+    async def _fetch_osm_province(
+        self, keyword: str, province: str, max_cities: int = 5
+    ) -> List[ProspectLead]:
+        """Loop kota-kota di provinsi, gabungkan hasil, batasi 40 leads."""
+        prov_lower = province.strip().lower()
+        cities = self.PROVINCE_CITIES.get(prov_lower, [])
+        if not cities:
+            # Try prefix match (e.g. "sumatera utara" -> "sumatera utara")
+            for prov, cls in self.PROVINCE_CITIES.items():
+                if prov_lower.startswith(prov):
+                    cities = cls
+                    break
+        if not cities:
+            return []
+
+        results: List[ProspectLead] = []
+        seen_ids: set = set()
+        deadline = time.monotonic() + 30  # 30s budget
+
+        for city in cities[:max_cities]:
+            if time.monotonic() > deadline:
+                break
+            leads = await self._fetch_osm_city(keyword, city)
+            for lead in leads:
+                if lead.id not in seen_ids:
+                    seen_ids.add(lead.id)
+                    results.append(lead)
+            if len(results) >= 40:
+                break
+
+        return results[:40]
+
+    # ------------------------------------------------------------------ #
+    #  Core: fetch OSM for entire Indonesia (loop national cities)
+    # ------------------------------------------------------------------ #
+
+    async def _fetch_osm_national(self, keyword: str) -> List[ProspectLead]:
+        """Loop kota-kota terbesar Indonesia, stop early saat cukup data."""
+        results: List[ProspectLead] = []
+        seen_ids: set = set()
+        deadline = time.monotonic() + 60  # 60s budget
+
+        for city in self.NATIONAL_CITIES:
+            if time.monotonic() > deadline:
+                break
+            leads = await self._fetch_osm_city(keyword, city)
+            for lead in leads:
+                if lead.id not in seen_ids:
+                    seen_ids.add(lead.id)
+                    results.append(lead)
+            if len(results) >= 40:
+                break
+
+        return results[:40]
+
+    # ------------------------------------------------------------------ #
+    #  Dispatcher: _fetch_osm routes to city / province / national
+    # ------------------------------------------------------------------ #
+
+    async def _fetch_osm(self, keyword: str, location: str) -> List[ProspectLead]:
+        kind = self._location_kind(location)
+        if kind == "national":
+            return await self._fetch_osm_national(keyword)
+        if kind == "province":
+            return await self._fetch_osm_province(keyword, location)
+        return await self._fetch_osm_city(keyword, location)
+
+    # ------------------------------------------------------------------ #
+    #  Public: province_hint (used by frontend)
+    # ------------------------------------------------------------------ #
 
     def province_hint(self, location: str) -> Optional[str]:
         key = (location or "").strip().lower()
@@ -387,38 +575,79 @@ class DirectoryScraper(BaseScraperAdapter):
                 return hint
         return None
 
+    # ------------------------------------------------------------------ #
+    #  Public API (called by main.py)
+    # ------------------------------------------------------------------ #
+
     async def fetch_leads_with_meta(self, keyword: str, location: Optional[str] = None, custom_endpoint: Optional[str] = None):
         """
         Return (leads, meta) — meta.hint dipakai frontend kalau provinsi luas/Papua-centre kosong.
-        Seluruh Indonesia: wajib lokasi kota/kabupaten — bukan provinsi hutan.
+        Seluruh Indonesia: loop kota-kota terbesar.
+        Provinsi: loop kota di dalamnya.
+        Kota: geocode + around query.
         """
         kw = (keyword or "").strip()
         loc = (location or "").strip()
         if not loc:
-            return [], {"hint": "Isi lokasi kota/kabupaten — contoh: Jayapura, Manokwari, Jakarta, Bandung, Banjarmasin, Makassar."}
+            return [], {"hint": "Isi lokasi kota/kabupaten — contoh: Jakarta, Bandung, Medan, Makassar, Banjarmasin, Jayapura."}
+
+        kind = self._location_kind(loc)
         hint = self.province_hint(loc)
-        if hint:
-            # tetap coba, tapi siapkan hint kalau hasilnya 0 — geocode Papua centre memang hutan
-            pass
+
+        # Timeout: nasional/provinsi butuh waktu lebih (loop kota)
+        timeout = 90.0 if kind in ("national", "province") else 20.0
+
         try:
-            osm_leads = await asyncio.wait_for(self._fetch_osm(kw, loc), timeout=15.0)
+            osm_leads = await asyncio.wait_for(self._fetch_osm(kw, loc), timeout=timeout)
             if not osm_leads:
+                if kind == "national":
+                    return [], {
+                        "hint": "Scan seluruh Indonesia selesai tapi 0 hasil. "
+                                "OSM mungkin kosong untuk keyword ini. "
+                                "Coba kata kunci lain (cafe, resto, hotel, klinik, bengkel) atau pilih kota spesifik: "
+                                "Jakarta, Surabaya, Bandung, Medan, Makassar, Banjarmasin.",
+                        "detail": "Seluruh 20 kota terbesar sudah di-scan.",
+                    }
                 if hint:
-                    return [], {"hint": f'"{loc}" adalah provinsi luas (titik tengah di hutan, bukan kota). Coba kota di dalamnya: {hint}. Contoh: "Jayapura" untuk Papua, "Manokwari" untuk Papua Barat.'}
+                    return [], {
+                        "hint": (
+                            f'"{loc}" adalah provinsi luas (titik tengah di hutan, bukan kota). '
+                            f'Kami sudah coba scan kota-kota di dalamnya — hasilnya 0. '
+                            f'Coba kota langsung: {hint}'
+                        )
+                    }
                 geo = self._GEOCODE_CACHE.get(loc.lower(), (0, None))[1] if loc.lower() in self._GEOCODE_CACHE else None
                 if geo and self._is_province_broad(loc, geo):
-                    return [], {"hint": f'"{loc}" terlalu luas (pusat di hutan/0 hasil). Coba kota: {hint or "contoh: Jayapura, Timika, Merauke"} — bukan nama provinsi.'}
-                return [], {"hint": None, "detail": f'Tidak ada hasil OSM di sekitar {loc} untuk kata "{kw or "kosong (browse)"}" (radius 8km). Bukan berarti semua sudah punya website — OSM di area ini sepi. Coba tanpa keyword, kata lain (cafe/resto/hotel/klinik), atau kota/kabupaten tetangga.'}
+                    return [], {
+                        "hint": (
+                            f'"{loc}" terlalu luas (pusat di hutan/0 hasil). '
+                            f'Coba kota: {hint or "contoh: Jayapura, Medan, Jakarta"} — bukan nama provinsi.'
+                        )
+                    }
+                return [], {
+                    "hint": None,
+                    "detail": (
+                        f'Tidak ada hasil OSM di sekitar {loc} untuk kata "{kw or "kosong (browse)"}". '
+                        f"Bukan berarti semua sudah punya website — data OSM memang terbatas. "
+                        f"Coba tanpa keyword, kata lain (cafe/resto/hotel/klinik/bengkel), atau kota/kabupaten tetangga."
+                    ),
+                }
+
             if kw:
                 expanded = self._expand_terms(kw.lower().split())
                 filtered = [l for l in osm_leads if any(term in f"{l.name} {l.category}".lower() for term in expanded)]
                 if not filtered:
                     return [], {"hint": f'Tidak ada "{kw}" di OSM sekitar {loc} ({len(osm_leads)} ditemukan di luar kategori). Coba tanpa keyword atau kata lain.'}
                 return filtered, {"hint": None}
+
             return osm_leads, {"hint": None}
+
         except asyncio.TimeoutError:
             print(f"[DirectoryScraper OSM overall timeout loc={loc} kw={kw}]")
-            return [], {"hint": "Overpass timeout — jaringan lambat. Coba lagi atau ganti kota.", "retry": True}
+            return [], {
+                "hint": "Scan timeout — Overpass API lambat. Coba lagi, atau pilih kota yang lebih spesifik.",
+                "retry": True,
+            }
         except Exception as e:
             print(f"[DirectoryScraper fetch_leads OSM error]: {e}")
             return [], {"hint": None}

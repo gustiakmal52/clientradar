@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Background -->
+  <rect width="128" height="128" rx="24" fill="#0B0B12"/>
+  <!-- Radar rings -->
+  <circle cx="64" cy="64" r="46" fill="none" stroke="#A855F7" stroke-width="2" opacity="0.35"/>
+  <circle cx="64" cy="64" r="32" fill="none" stroke="#A855F7" stroke-width="2" opacity="0.55"/>
+  <circle cx="64" cy="64" r="18" fill="none" stroke="#A855F7" stroke-width="2" opacity="0.75"/>
+  <!-- Cross lines -->
+  <line x1="18" y1="64" x2="110" y2="64" stroke="#2E1A4E" stroke-width="1.5"/>
+  <line x1="64" y1="18" x2="64" y2="110" stroke="#2E1A4E" stroke-width="1.5"/>
+  <!-- Sweep beam -->
+  <path d="M64 64 L64 18 A46 46 0 0 1 96.5 31.5 Z" fill="#A855F7" opacity="0.45"/>
+  <!-- Blips (client leads) -->
+  <circle cx="88" cy="42" r="5" fill="#C084FC"/>
+  <circle cx="46" cy="82" r="4" fill="#C084FC"/>
+  <circle cx="78" cy="88" r="3.5" fill="#7C3AED"/>
+  <!-- Center dot -->
+  <circle cx="64" cy="64" r="4" fill="#E9D5FF"/>
+</svg>

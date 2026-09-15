@@ -78,3 +78,10 @@ class CustomSourceConfigResponse(BaseModel):
     app_endpoint_url: str
     active: bool
     has_api_key: bool
+
+class GeoLocateResponse(BaseModel):
+    """Auto-detect lokasi user via IP — untuk API sharing & frontend auto-fill."""
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+    ip: Optional[str] = None

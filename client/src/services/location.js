@@ -1,6 +1,7 @@
 /**
  * Detect the user's current city & region — works for semua wilayah.
- * 1) IP lookup (ipwho.is)  2) fallback ipapi.co  3) browser timezone (tanpa hardcode kota)
+ * 1) Backend sendiri (/api/geo/locate) — konsisten dengan API sharing
+ * 2) IP lookup (ipwho.is)  3) fallback ipapi.co  4) browser timezone (tanpa hardcode kota)
  * Dipanggil otomatis saat app load, jadi tiap rekan yang download langsung terisi kotanya.
  */
 export async function detectUserLocation() {
@@ -14,6 +15,18 @@ export async function detectUserLocation() {
       ip: data.ip || data.query || undefined,
     };
   };
+
+  // 0) Backend sendiri — endpoint /api/geo/locate (satu sumber, konsisten)
+  try {
+    const res = await fetch('/api/geo/locate');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && (data.city || data.region)) {
+        const p = tryParse(data);
+        if (p) return p;
+      }
+    }
+  } catch (_) {}
 
   // 1) ipwho.is — gratis, tanpa key
   try {

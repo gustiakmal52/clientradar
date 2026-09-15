@@ -2,6 +2,7 @@ import httpx
 from typing import List, Optional
 from .base import BaseScraperAdapter
 from ...models.schema import ProspectLead, DiagnosticItem
+from ..security import validate_ssrf_url
 
 class CustomUserAppScraper(BaseScraperAdapter):
     """
@@ -22,6 +23,11 @@ class CustomUserAppScraper(BaseScraperAdapter):
         if not endpoint:
             # Fallback if no target address configured yet
             return []
+
+        # SSRF guard — endpoint kustom tidak boleh menunjuk alamat internal
+        err = validate_ssrf_url(endpoint)
+        if err:
+            raise RuntimeError(f"Endpoint tidak diizinkan: {err}")
 
         try:
             leads: List[ProspectLead] = []
